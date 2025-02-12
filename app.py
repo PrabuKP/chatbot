@@ -4,7 +4,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 import torch
 
 # Konfigurasi Model
-MODEL_NAME = "meta-llama/Meta-Llama-3-8B"  # Ganti dengan model yang sesuai
+MODEL_NAME = "meta-llama/Llama-3.2-1B-Instruct"  # Ganti dengan model yang sesuai
 HF_TOKEN = "your_hf_token"  # Dapatkan dari https://huggingface.co/settings/tokens
 
 # Inisialisasi Model
