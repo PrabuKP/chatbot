@@ -1,54 +1,74 @@
+# chatbot.py
 import streamlit as st
-from huggingface_hub import InferenceClient
-from huggingface_hub.errors import HfHubHTTPError
+from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
+import torch
 
-# Ambil API token dari Streamlit secrets (pastikan Anda sudah mengatur file .streamlit/secrets.toml atau melalui dashboard Streamlit Cloud)
-hf_api_key = st.secrets["HF_API_KEY"]
+# Konfigurasi Model
+MODEL_NAME = "meta-llama/Meta-Llama-3-8B"  # Ganti dengan model yang sesuai
+HF_TOKEN = "your_hf_token"  # Dapatkan dari https://huggingface.co/settings/tokens
 
-# Inisialisasi client untuk remote inference menggunakan token tersebut
-client = InferenceClient(api_key=hf_api_key)
+# Inisialisasi Model
+@st.cache_resource
+def load_model():
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, token=HF_TOKEN)
+    model = AutoModelForCausalLM.from_pretrained(
+        MODEL_NAME,
+        token=HF_TOKEN,
+        device_map="auto",
+        torch_dtype=torch.float16,
+        load_in_8bit=True  # Kuantisasi untuk menghemat memori
+    )
+    return model, tokenizer
 
-# Judul aplikasi
-st.title("Chatbot dengan Remote Inference")
+model, tokenizer = load_model()
 
-# Inisialisasi riwayat pesan (session state) jika belum ada
+# Fungsi Generate Response
+def generate_response(prompt):
+    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+    outputs = model.generate(
+        inputs.input_ids,
+        max_new_tokens=500,
+        temperature=0.7,
+        top_p=0.9,
+        repetition_penalty=1.1,
+        do_sample=True
+    )
+    return tokenizer.decode(outputs[0], skip_special_tokens=True)
+
+# UI Streamlit
+st.title("🦙 LLaMA Chatbot 3.2 1B")
+st.caption("Powered by Meta LLaMA and Streamlit")
+
+# Inisialisasi chat history
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Tampilkan riwayat percakapan yang telah disimpan
+# Tampilkan chat history
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# Terima input dari pengguna
-user_input = st.chat_input("Ketik pesan Anda...")
-
-if user_input:
-    # Tambahkan pesan pengguna ke riwayat dan tampilkan
-    st.session_state.messages.append({"role": "user", "content": user_input})
-    with st.chat_message("user"):
-        st.markdown(user_input)
+# Input pengguna
+if prompt := st.chat_input("Apa pertanyaan Anda?"):
+    # Tambahkan user message ke history
+    st.session_state.messages.append({"role": "user", "content": prompt})
     
-    # Buat prompt dengan instruksi agar jawaban dihasilkan dalam bahasa Indonesia
-    prompt = "Tolong jawab pertanyaan berikut dalam bahasa Indonesia:\n" + user_input
-
-    try:
-        # Panggil endpoint text generation (remote inference) untuk menghasilkan respons chatbot
-        response = client.text_generation(
-            prompt=prompt,
-            model="meta-llama/Llama-3.2-3B",  # Ganti dengan model yang Anda inginkan
-            max_new_tokens=150
-        )
-        # Misalnya, respons berupa list dict dengan key "generated_text"
-        if isinstance(response, list) and "generated_text" in response[0]:
-            bot_response = response[0]["generated_text"].strip()
-        else:
-            bot_response = "No response"
-    except HfHubHTTPError as e:
-        # Jika terjadi error, tangkap error dan konversikan ke string
-        bot_response = str(e)
-
-    # Tambahkan respons bot ke riwayat dan tampilkan
-    st.session_state.messages.append({"role": "assistant", "content": bot_response})
+    # Tampilkan user message
+    with st.chat_message("user"):
+        st.markdown(prompt)
+    
+    # Generate response
     with st.chat_message("assistant"):
-        st.markdown(bot_response)
+        full_prompt = f"""<|begin_of_text|><|start_header_id|>system<|end_header_id|>
+        Anda adalah asisten AI yang membantu. Berikan jawaban yang jelas dan singkat.<|eot_id|>
+        {"".join([f"<|start_header_id|>{msg['role']}<|end_header_id|>\n{msg['content']}<|eot_id|>" 
+                 for msg in st.session_state.messages])}
+        <|start_header_id|>assistant<|end_header_id|>"""
+        
+        response = generate_response(full_prompt)
+        response_clean = response.split("<|start_header_id|>assistant<|end_header_id|>")[-1].strip()
+        
+        st.markdown(response_clean)
+    
+    # Tambahkan assistant response ke history
+    st.session_state.messages.append({"role": "assistant", "content": response_clean})
